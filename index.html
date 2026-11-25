@@ -1,0 +1,1975 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>BrickSnap 3D — 3D 積木解體與拼裝遊戲</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+      background: #0b0f19; color: #e2e8f0;
+      font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif;
+    }
+    #canvas-container {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      touch-action: none; cursor: grab;
+    }
+    #canvas-container.dragging-cam { cursor: grabbing; }
+    #canvas-container.hovering-brick { cursor: pointer; }
+    #canvas-container.dragging-brick { cursor: move; }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
+      50% { box-shadow: 0 0 24px 4px rgba(56, 189, 248, 0.35); }
+    }
+    .pulse-cta { animation: pulseGlow 2.2s infinite; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- Top HUD -->
+  <header class="fixed top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+    <div class="glass-panel rounded-xl px-3.5 py-2 flex items-center gap-3 pointer-events-auto shadow-lg">
+      <div class="w-8 h-8 rounded-lg bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-sky-400 font-bold text-sm">
+        3D
+      </div>
+      <div>
+        <h1 class="text-sm sm:text-base font-bold tracking-tight text-slate-100 leading-tight">BrickSnap 3D</h1>
+        <p id="status-subtitle" class="text-[11px] text-slate-400 leading-tight">點擊 3D 作品即可解體</p>
+      </div>
+    </div>
+
+    <!-- Model Selector, AI Gen & Audio -->
+    <div class="glass-panel rounded-xl p-1.5 flex items-center gap-1.5 pointer-events-auto shadow-lg max-w-full overflow-hidden">
+      <div id="model-tabs" class="flex items-center gap-1 overflow-x-auto max-w-[200px] sm:max-w-xs md:max-w-md py-0.5 no-scrollbar">
+        <button data-model="robot" class="model-btn px-2.5 py-1.5 rounded-lg text-xs font-medium transition bg-sky-500 text-slate-950 shrink-0">機器人</button>
+        <button data-model="shuttle" class="model-btn px-2.5 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:bg-slate-800 shrink-0">太空梭</button>
+        <button data-model="lighthouse" class="model-btn px-2.5 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:bg-slate-800 shrink-0">燈塔</button>
+      </div>
+      <div class="w-px h-5 bg-slate-700/80 mx-0.5 shrink-0"></div>
+      <button id="btn-open-ai" title="AI 隨機生成積木組合" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-violet-600 via-indigo-600 to-sky-500 hover:from-violet-500 hover:to-sky-400 text-white flex items-center gap-1.5 shadow-md shadow-indigo-500/25 shrink-0 transition active:scale-95">
+        <span>✨</span>
+        <span class="hidden sm:inline">AI 隨機生成</span>
+        <span class="sm:hidden">AI 生成</span>
+      </button>
+      <button id="btn-open-key" title="設定 Gemini API Key" class="px-2 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center gap-1 shrink-0">
+        <span>🔑</span>
+        <span id="key-badge" class="w-2 h-2 rounded-full bg-rose-500" title="未設定 API Key"></span>
+      </button>
+      <div class="w-px h-5 bg-slate-700/80 mx-0.5 shrink-0"></div>
+      <button id="btn-sound" title="切換音效" class="px-2 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center gap-1 shrink-0">
+        <span id="sound-icon">🔊</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Material Switcher Floating Bar -->
+  <aside class="fixed top-16 right-3 z-20 pointer-events-none">
+    <div class="glass-panel rounded-xl p-1.5 flex items-center gap-1 shadow-lg pointer-events-auto">
+      <span class="text-[11px] text-slate-400 font-semibold px-1.5 flex items-center gap-1">
+        <span>💎</span><span class="hidden sm:inline">材質</span>
+      </span>
+      <div id="material-selector" class="flex items-center gap-1">
+        <button data-mat="default" class="mat-btn px-2 py-1 rounded-lg text-xs font-semibold transition bg-sky-500 text-slate-950 shadow-sm" title="預設混合材質">
+          ✨ 混合
+        </button>
+        <button data-mat="metal" class="mat-btn px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition" title="純金屬材質">
+          🪙 金屬
+        </button>
+        <button data-mat="wood" class="mat-btn px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition" title="原木紋理材質">
+          🪵 木頭
+        </button>
+        <button data-mat="marble" class="mat-btn px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition" title="拋光大理石材質">
+          🏛️ 大理石
+        </button>
+        <button data-mat="jade" class="mat-btn px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition" title="晶瑩翡翠玉石材質">
+          🟢 翡翠
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Showcase Center Prompt -->
+  <div id="showcase-banner" class="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto transition-all duration-300">
+    <button id="btn-explode" class="pulse-cta glass-panel px-6 py-3 rounded-2xl border-sky-400/50 text-sky-300 hover:text-white hover:bg-sky-500/25 font-semibold text-sm sm:text-base transition flex items-center gap-2.5 shadow-2xl">
+      <span>💥</span>
+      <span>點擊作品或此處：開始解體拼裝</span>
+    </button>
+  </div>
+
+  <!-- Progress & Controls Bottom Bar -->
+  <footer class="fixed bottom-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+    <!-- Stats -->
+    <div class="glass-panel rounded-xl px-3.5 py-2 flex items-center gap-4 pointer-events-auto shadow-lg">
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-400">拼裝進度</div>
+        <div class="text-sm font-bold text-slate-100"><span id="stat-placed">0</span> / <span id="stat-total">0</span> 塊</div>
+      </div>
+      <div class="w-24 sm:w-32 h-2 bg-slate-800 rounded-full overflow-hidden">
+        <div id="progress-bar" class="h-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all duration-300" style="width: 0%"></div>
+      </div>
+      <div class="hidden sm:block">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400">計時</div>
+        <div id="stat-timer" class="text-sm font-mono font-semibold text-sky-300">00:00</div>
+      </div>
+    </div>
+
+    <!-- Action Controls -->
+    <div class="glass-panel rounded-xl p-1.5 flex flex-wrap items-center gap-1.5 pointer-events-auto shadow-lg">
+      <button id="btn-hint" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition disabled:opacity-40 disabled:pointer-events-none">
+        💡 提示
+      </button>
+      <button id="btn-ghost" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/80 text-slate-200 hover:bg-slate-700 transition">
+        👻 藍圖：開
+      </button>
+      <button id="btn-reset-cam" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/80 text-slate-200 hover:bg-slate-700 transition">
+        🎥 重置視角
+      </button>
+      <button id="btn-restart" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 transition">
+        ↺ 重新開始
+      </button>
+    </div>
+  </footer>
+
+  <!-- Instruction Toast -->
+  <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-30 glass-panel px-4 py-2 rounded-full text-xs sm:text-sm text-sky-200 border-sky-400/30 opacity-0 pointer-events-none transition-opacity duration-300 shadow-xl">
+    提示訊息
+  </div>
+
+  <!-- Victory Modal -->
+  <div id="victory-modal" class="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="glass-panel max-w-sm w-full rounded-2xl p-6 text-center border-emerald-400/30 shadow-2xl">
+      <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-3xl">
+        🏆
+      </div>
+      <h2 class="text-xl font-bold text-white mb-1">作品拼裝完成！</h2>
+      <p id="victory-desc" class="text-sm text-slate-300 mb-4">你成功將所有積木精準歸位。</p>
+      <div class="grid grid-cols-2 gap-2.5 mb-5">
+        <div class="bg-slate-900/80 rounded-xl p-3 border border-slate-800">
+          <div class="text-[11px] text-slate-400">完成時間</div>
+          <div id="victory-time" class="text-lg font-mono font-bold text-sky-300">00:00</div>
+        </div>
+        <div class="bg-slate-900/80 rounded-xl p-3 border border-slate-800">
+          <div class="text-[11px] text-slate-400">積木總數</div>
+          <div id="victory-bricks" class="text-lg font-mono font-bold text-emerald-300">0 塊</div>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button id="btn-play-again" class="flex-1 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-sm transition">
+          再玩一次
+        </button>
+        <button id="btn-next-model" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm transition">
+          下一個作品
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Brick Generator Modal -->
+  <div id="ai-modal" class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="glass-panel max-w-md w-full rounded-2xl p-5 sm:p-6 border-indigo-500/30 shadow-2xl relative my-auto">
+      <!-- Close button -->
+      <button id="btn-close-ai" class="absolute top-4 right-4 w-7 h-7 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-sm transition">
+        ✕
+      </button>
+
+      <!-- Modal Header -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/30 shrink-0">
+          ✨
+        </div>
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white leading-tight">Gemini 3D 積木智慧生成</h2>
+          <p class="text-xs text-indigo-300/80">串接 Google Gemini API 隨機生成專屬 3D 積木作品</p>
+        </div>
+      </div>
+
+      <!-- API Key Field -->
+      <div class="mb-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+            <span>🔑 Gemini API Key</span>
+            <span id="api-key-status" class="text-[10px] text-amber-400 font-normal">(尚未設定)</span>
+          </label>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="text-[11px] text-sky-400 hover:text-sky-300 hover:underline flex items-center gap-0.5">
+            取得免費 Key ↗
+          </a>
+        </div>
+        <div class="relative">
+          <input id="input-api-key" type="password" placeholder="貼上 AIzaSy 開頭的 API Key..." class="w-full bg-slate-950/90 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 pr-16" />
+          <button id="btn-toggle-key-vis" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400 hover:text-slate-200 px-1.5 py-0.5 rounded bg-slate-800/60">
+            顯示
+          </button>
+        </div>
+        <div class="flex items-center justify-between mt-1 text-[10px] text-slate-500">
+          <span>金鑰安全儲存於本機瀏覽器 (localStorage)</span>
+          <button id="btn-clear-key" type="button" class="text-rose-400/80 hover:text-rose-300 hover:underline hidden">清除金鑰</button>
+        </div>
+      </div>
+
+      <!-- Model Selection -->
+      <div class="mb-4">
+        <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+          🤖 模型選擇 (Model)
+        </label>
+        <select id="select-model" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer">
+          <option value="gemini-3.5-flash" selected>GEMINI 3.5 FLASH (使用者指定)</option>
+          <option value="gemini-2.5-flash">GEMINI 2.5 FLASH (推薦穩定)</option>
+          <option value="gemini-2.0-flash">GEMINI 2.0 FLASH</option>
+          <option value="gemini-1.5-flash">GEMINI 1.5 FLASH</option>
+          <option value="custom">自訂模型名稱...</option>
+        </select>
+        <input id="input-custom-model" type="text" placeholder="請輸入模型 ID，例如: gemini-3.5-flash" class="hidden mt-1.5 w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500" />
+      </div>
+
+      <!-- Material Style Selection -->
+      <div class="mb-4">
+        <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+          💎 材質風格偏好
+        </label>
+        <select id="select-ai-mat-style" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer">
+          <option value="mixed" selected>✨ 多元混合 (金屬、木頭、大理石、翡翠依結構分配)</option>
+          <option value="metal">🪙 科技機械金屬風 (全金屬)</option>
+          <option value="wood">🪵 溫潤自然工藝風 (全木質)</option>
+          <option value="marble">🏛️ 典雅宮廷大理石風 (全大理石)</option>
+          <option value="jade">🟢 仙氣東方翡翠玉石風 (全翡翠)</option>
+        </select>
+      </div>
+
+      <!-- Theme / Prompt -->
+      <div class="mb-4">
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-semibold text-slate-300">
+            🎨 作品主題靈感
+          </label>
+          <button id="btn-random-prompt" type="button" class="text-[11px] text-indigo-300 hover:text-white flex items-center gap-1 font-medium bg-indigo-500/20 hover:bg-indigo-500/35 px-2 py-0.5 rounded-md border border-indigo-500/30 transition">
+            🎲 換個隨機靈感
+          </button>
+        </div>
+        <div>
+          <input id="input-theme" type="text" placeholder="留空則由 Gemini 隨機自由發想，或輸入指定主題..." class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500" />
+        </div>
+
+        <!-- Quick Tags -->
+        <div class="flex flex-wrap gap-1.5 mt-2">
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="可愛柴犬">🐶 柴犬</button>
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="超跑賽車">🏎️ 賽車</button>
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="迷你小城堡">🏰 城堡</button>
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="美式漢堡套餐">🍔 漢堡</button>
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="侏羅紀暴龍">🦖 暴龍</button>
+          <button type="button" class="theme-tag text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md transition" data-theme="外星飛碟">🛸 飛碟</button>
+        </div>
+      </div>
+
+      <!-- Error / Status Box -->
+      <div id="ai-status-box" class="hidden mb-4 p-2.5 rounded-xl text-xs"></div>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-2.5">
+        <button id="btn-cancel-ai" type="button" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition">
+          取消
+        </button>
+        <button id="btn-submit-ai" type="button" class="flex-[2] py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30">
+          <span id="ai-submit-icon">✨</span>
+          <span id="ai-submit-text">開始隨機生成</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================
+    // 1. AUDIO SYNTHESIZER (Web Audio API, no external files)
+    // =========================================================
+    class SoundFX {
+      constructor() {
+        this.ctx = null;
+        this.muted = false;
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) this.ctx = new AudioCtx();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      }
+      playSnap(pitchOffset = 0) {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(340 + pitchOffset * 18, now);
+        osc.frequency.exponentialRampToValueAtTime(680 + pitchOffset * 22, now + 0.06);
+        gain.gain.setValueAtTime(0.22, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.12);
+      }
+      playSelect() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(640, now + 0.05);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      }
+      playExplode() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.exponentialRampToValueAtTime(55, now + 0.35);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.4);
+      }
+      playVictory() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const notes = [523.25, 659.25, 783.99, 1046.5];
+        notes.forEach((freq, idx) => {
+          const now = this.ctx.currentTime + idx * 0.09;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now);
+          gain.gain.setValueAtTime(0.16, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.36);
+        });
+      }
+      playMagic() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        const notes = [440, 554.37, 659.25, 880, 1108.73, 1318.51];
+        notes.forEach((freq, idx) => {
+          const now = this.ctx.currentTime + idx * 0.055;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.3);
+        });
+      }
+    }
+    const sfx = new SoundFX();
+
+    // =========================================================
+    // 2. 3D MODELS DATA (Voxel / Brick Definitions)
+    //    Each brick: { x, y, z, w, h, d, color, label }
+    //    Grid unit: 1 unit = 1 stud width (1.0), brick height = 0.85
+    // =========================================================
+    const BRICK_H = 0.85;
+    const MODELS = {
+      robot: {
+        name: '經典機器人',
+        bricks: [
+          // Feet (金屬)
+          { x: -1.1, y: 0, z: 0.2, w: 1.4, h: 1, d: 1.8, color: 0x334155, material: 'metal' },
+          { x:  1.1, y: 0, z: 0.2, w: 1.4, h: 1, d: 1.8, color: 0x334155, material: 'metal' },
+          // Legs (金屬)
+          { x: -1.1, y: 1, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x64748b, material: 'metal' },
+          { x:  1.1, y: 1, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x64748b, material: 'metal' },
+          { x: -1.1, y: 2, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x64748b, material: 'metal' },
+          { x:  1.1, y: 2, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x64748b, material: 'metal' },
+          // Waist (黃金金屬)
+          { x: 0, y: 3, z: 0, w: 3.4, h: 1, d: 1.6, color: 0xf59e0b, material: 'metal' },
+          // Torso (電鍍金屬)
+          { x: 0, y: 4, z: 0, w: 3.6, h: 1, d: 1.8, color: 0xef4444, material: 'metal' },
+          { x: 0, y: 5, z: 0, w: 3.6, h: 1, d: 1.8, color: 0xef4444, material: 'metal' },
+          // Chest Core (透光翡翠)
+          { x: 0, y: 4.5, z: 1.05, w: 1.2, h: 1, d: 0.4, color: 0x38bdf8, material: 'jade' },
+          // Arms (鈦合金金屬)
+          { x: -2.5, y: 5, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x3b82f6, material: 'metal' },
+          { x:  2.5, y: 5, z: 0, w: 1.1, h: 1, d: 1.1, color: 0x3b82f6, material: 'metal' },
+          { x: -2.5, y: 4, z: 0, w: 0.9, h: 1, d: 0.9, color: 0x94a3b8, material: 'metal' },
+          { x:  2.5, y: 4, z: 0, w: 0.9, h: 1, d: 0.9, color: 0x94a3b8, material: 'metal' },
+          // Neck & Head (大理石石材)
+          { x: 0, y: 6, z: 0, w: 1.4, h: 1, d: 1.2, color: 0x475569, material: 'metal' },
+          { x: 0, y: 7, z: 0, w: 2.6, h: 1, d: 2.0, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 8, z: 0, w: 2.6, h: 1, d: 2.0, color: 0xf8fafc, material: 'marble' },
+          // Eyes & Antenna (翡翠透光目鏡 & 金屬天線)
+          { x: -0.65, y: 7.5, z: 1.1, w: 0.55, h: 0.6, d: 0.3, color: 0x22d3ee, material: 'jade' },
+          { x:  0.65, y: 7.5, z: 1.1, w: 0.55, h: 0.6, d: 0.3, color: 0x22d3ee, material: 'jade' },
+          { x: 0, y: 9, z: 0, w: 0.5, h: 1, d: 0.5, color: 0xfacc15, material: 'metal' }
+        ]
+      },
+      shuttle: {
+        name: '迷你太空梭',
+        bricks: [
+          // Thrusters (高溫金屬 & 晶石翡翠火光)
+          { x: -0.8, y: 0, z: -2.2, w: 1.0, h: 1, d: 1.2, color: 0x334155, material: 'metal' },
+          { x:  0.8, y: 0, z: -2.2, w: 1.0, h: 1, d: 1.2, color: 0x334155, material: 'metal' },
+          { x:  0,   y: 0.5, z: -2.4, w: 1.0, h: 1, d: 1.0, color: 0xf97316, material: 'jade' },
+          // Wings (鈦合金)
+          { x: -2.2, y: 0, z: -0.5, w: 2.0, h: 0.6, d: 2.4, color: 0xe2e8f0, material: 'metal' },
+          { x:  2.2, y: 0, z: -0.5, w: 2.0, h: 0.6, d: 2.4, color: 0xe2e8f0, material: 'metal' },
+          { x: -3.4, y: 0, z: -1.0, w: 1.0, h: 0.6, d: 1.6, color: 0xef4444, material: 'metal' },
+          { x:  3.4, y: 0, z: -1.0, w: 1.0, h: 0.6, d: 1.6, color: 0xef4444, material: 'metal' },
+          // Main Fuselage (白玉大理石隔熱層)
+          { x: 0, y: 0, z: -0.6, w: 2.2, h: 1, d: 2.8, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 0, z:  2.0, w: 2.0, h: 1, d: 2.2, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 1, z: -0.6, w: 1.8, h: 1, d: 2.4, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 1, z:  1.6, w: 1.6, h: 1, d: 1.8, color: 0x0ea5e9, material: 'jade' },
+          // Nose & Tail Fin (金屬黑耀與赤金尾翼)
+          { x: 0, y: 0.3, z: 3.6, w: 1.2, h: 0.8, d: 1.2, color: 0x1e293b, material: 'metal' },
+          { x: 0, y: 2, z: -1.5, w: 0.6, h: 1, d: 1.6, color: 0xef4444, material: 'metal' },
+          { x: 0, y: 3, z: -1.7, w: 0.6, h: 1, d: 1.0, color: 0xef4444, material: 'metal' }
+        ]
+      },
+      lighthouse: {
+        name: '海港燈塔',
+        bricks: [
+          // Rock Base (大理石基石)
+          { x: -1.2, y: 0, z: 0, w: 2.2, h: 1, d: 3.4, color: 0x475569, material: 'marble' },
+          { x:  1.2, y: 0, z: 0, w: 2.2, h: 1, d: 3.4, color: 0x475569, material: 'marble' },
+          // Tower Stripes (紅白大理石雕砌)
+          { x: 0, y: 1, z: 0, w: 2.4, h: 1, d: 2.4, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 2, z: 0, w: 2.2, h: 1, d: 2.2, color: 0xef4444, material: 'marble' },
+          { x: 0, y: 3, z: 0, w: 2.0, h: 1, d: 2.0, color: 0xf8fafc, material: 'marble' },
+          { x: 0, y: 4, z: 0, w: 1.8, h: 1, d: 1.8, color: 0xef4444, material: 'marble' },
+          { x: 0, y: 5, z: 0, w: 1.6, h: 1, d: 1.6, color: 0xf8fafc, material: 'marble' },
+          // Balcony (鍛鐵金屬)
+          { x: 0, y: 6, z: 0, w: 2.4, h: 0.6, d: 2.4, color: 0x1e293b, material: 'metal' },
+          // Lantern Room (璀璨黃翡翠透光鏡)
+          { x: 0, y: 6.8, z: 0, w: 1.4, h: 1.2, d: 1.4, color: 0xfef08a, material: 'jade' },
+          // Roof (金屬銅頂)
+          { x: 0, y: 8.0, z: 0, w: 1.8, h: 0.7, d: 1.8, color: 0xef4444, material: 'metal' },
+          { x: 0, y: 8.7, z: 0, w: 0.8, h: 0.7, d: 0.8, color: 0xef4444, material: 'metal' },
+          // Side Cottage (溫潤原木小屋)
+          { x: 2.1, y: 1, z: 0.4, w: 1.6, h: 1, d: 1.8, color: 0xf8fafc, material: 'wood' },
+          { x: 2.1, y: 2, z: 0.4, w: 1.8, h: 0.8, d: 2.0, color: 0x3b82f6, material: 'wood' }
+        ]
+      }
+    };
+
+    // =========================================================
+    // 3. THREE.JS SCENE SETUP
+    // =========================================================
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0f19);
+    scene.fog = new THREE.FogExp2(0x0b0f19, 0.018);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    container.appendChild(renderer.domElement);
+
+    // Procedural Studio Environment Map (ensures metallic/marble/jade materials reflect bright studio lighting)
+    try {
+      const envCanvas = document.createElement('canvas');
+      envCanvas.width = 512;
+      envCanvas.height = 256;
+      const ectx = envCanvas.getContext('2d');
+      const grad = ectx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0.0, '#f1f5f9');
+      grad.addColorStop(0.45, '#94a3b8');
+      grad.addColorStop(0.55, '#475569');
+      grad.addColorStop(1.0, '#1e293b');
+      ectx.fillStyle = grad;
+      ectx.fillRect(0, 0, 512, 256);
+      // Studio softbox highlights
+      ectx.fillStyle = '#ffffff';
+      ectx.fillRect(45, 20, 120, 60);
+      ectx.fillRect(270, 18, 150, 65);
+      ectx.fillStyle = '#bae6fd';
+      ectx.fillRect(175, 90, 90, 42);
+      ectx.fillStyle = '#fef3c7';
+      ectx.fillRect(410, 82, 80, 48);
+
+      const envTex = new THREE.CanvasTexture(envCanvas);
+      envTex.mapping = THREE.EquirectangularReflectionMapping;
+      envTex.encoding = THREE.sRGBEncoding;
+
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      pmremGenerator.compileEquirectangularShader();
+      scene.environment = pmremGenerator.fromEquirectangular(envTex).texture;
+      envTex.dispose();
+      pmremGenerator.dispose();
+    } catch (e) {
+      console.warn('Studio environment map setup skipped:', e);
+    }
+
+    // Lighting
+    const hemiLight = new THREE.HemisphereLight(0xe2e8f0, 0x1e293b, 0.75);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
+    dirLight.position.set(12, 22, 14);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 2;
+    dirLight.shadow.camera.far = 60;
+    const d = 16;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    scene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.4);
+    rimLight.position.set(-14, 8, -12);
+    scene.add(rimLight);
+
+    const accentLight = new THREE.DirectionalLight(0xffeedd, 0.45);
+    accentLight.position.set(10, 16, -10);
+    scene.add(accentLight);
+
+    // Studio Floor & Baseplate
+    const floorGeo = new THREE.CircleGeometry(28, 64);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85, metalness: 0.1 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.02;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const gridHelper = new THREE.GridHelper(32, 32, 0x1e293b, 0x151e32);
+    scene.add(gridHelper);
+
+    // Central Assembly Platform
+    const platformGeo = new THREE.CylinderGeometry(4.6, 4.9, 0.25, 48);
+    const platformMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.3 });
+    const platform = new THREE.Mesh(platformGeo, platformMat);
+    platform.position.y = -0.13;
+    platform.receiveShadow = true;
+    scene.add(platform);
+
+    const ringGeo = new THREE.RingGeometry(4.55, 4.72, 64);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.01;
+    scene.add(ring);
+
+    // =========================================================
+    // 3.5 PROCEDURAL MATERIAL GENERATORS (Metal, Wood, Marble, Jade)
+    // =========================================================
+    let currentMaterialTheme = 'default';
+    const MATERIAL_TEXTURES = {
+      metal: null,
+      wood: null,
+      marble: null,
+      jade: null
+    };
+
+    function createWoodTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(256, 256);
+      const d = imgData.data;
+      for (let y = 0; y < 256; y++) {
+        for (let x = 0; x < 256; x++) {
+          const nx = x / 256;
+          const ny = y / 256;
+          const ring = Math.sin(nx * 32 + Math.sin(ny * 9) * 3.2) * 0.5 + 0.5;
+          const fiber = (Math.random() - 0.5) * 0.1;
+          const factor = 0.74 + ring * 0.22 + fiber;
+          const i = (y * 256 + x) * 4;
+          d[i] = Math.min(255, Math.floor(235 * factor));
+          d[i+1] = Math.min(255, Math.floor(190 * factor));
+          d[i+2] = Math.min(255, Math.floor(142 * factor));
+          d[i+3] = 255;
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    const MARBLE_CACHE = {};
+    let MARBLE_FIELD = null;
+    let MARBLE_BUMP_TEX = null;
+
+    function buildMarbleField() {
+      const size = 256;
+      const cloudArr = new Float32Array(size * size);
+      const veinArr = new Float32Array(size * size);
+
+      function hash2(ix, iy, period) {
+        const x = ((ix % period) + period) % period;
+        const y = ((iy % period) + period) % period;
+        let n = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+        n = Math.imul(n ^ (n >>> 13), 1274126177);
+        return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+      }
+
+      function valueNoise(x, y, period) {
+        const ix = Math.floor(x);
+        const iy = Math.floor(y);
+        const fx = x - ix;
+        const fy = y - iy;
+        const ux = fx * fx * (3 - 2 * fx);
+        const uy = fy * fy * (3 - 2 * fy);
+        const a = hash2(ix, iy, period);
+        const b = hash2(ix + 1, iy, period);
+        const c = hash2(ix, iy + 1, period);
+        const d = hash2(ix + 1, iy + 1, period);
+        return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+      }
+
+      function fbm(x, y, basePeriod, octaves) {
+        let val = 0;
+        let amp = 0.5;
+        let freq = 1;
+        let norm = 0;
+        for (let o = 0; o < octaves; o++) {
+          val += amp * valueNoise(x * freq, y * freq, basePeriod * freq);
+          norm += amp;
+          amp *= 0.5;
+          freq *= 2;
+        }
+        return val / norm;
+      }
+
+      for (let py = 0; py < size; py++) {
+        for (let px = 0; px < size; px++) {
+          const u = (px / size) * 4;
+          const v = (py / size) * 4;
+
+          // Domain warping for organic branching marble cracks
+          const wx = fbm(u + 1.3, v + 2.7, 4, 4);
+          const wy = fbm(u + 5.9, v + 4.1, 4, 4);
+          const wu = u + wx * 1.9;
+          const wv = v + wy * 1.9;
+
+          // Soft cloudy stone mottling
+          const cloud = fbm(wu * 0.85, wv * 0.85, 4, 5);
+
+          // Primary sharp branching veins (ridged noise)
+          const n1 = fbm(wu * 1.15, wv * 1.15, 4, 5) * 2.0 - 1.0;
+          const r1 = 1.0 - Math.abs(n1);
+          const vein1 = Math.pow(Math.max(0, r1), 11.0);
+
+          // Secondary fine hairline veins
+          const n2 = fbm(wu * 2.2 + 3.4, wv * 2.2 - 1.8, 8, 4) * 2.0 - 1.0;
+          const r2 = 1.0 - Math.abs(n2);
+          const vein2 = Math.pow(Math.max(0, r2), 15.0) * 0.6;
+
+          const idx = py * size + px;
+          cloudArr[idx] = cloud;
+          veinArr[idx] = Math.min(1.0, vein1 * 1.15 + vein2);
+        }
+      }
+
+      MARBLE_FIELD = { size, cloudArr, veinArr };
+
+      // Build shared bump texture from vein field
+      const bCanvas = document.createElement('canvas');
+      bCanvas.width = size;
+      bCanvas.height = size;
+      const bCtx = bCanvas.getContext('2d');
+      const bImg = bCtx.createImageData(size, size);
+      const bd = bImg.data;
+      for (let i = 0; i < size * size; i++) {
+        const val = Math.floor((1.0 - veinArr[i] * 0.55) * 255);
+        const p = i * 4;
+        bd[p] = val;
+        bd[p + 1] = val;
+        bd[p + 2] = val;
+        bd[p + 3] = 255;
+      }
+      bCtx.putImageData(bImg, 0, 0);
+      MARBLE_BUMP_TEX = new THREE.CanvasTexture(bCanvas);
+      MARBLE_BUMP_TEX.wrapS = THREE.RepeatWrapping;
+      MARBLE_BUMP_TEX.wrapT = THREE.RepeatWrapping;
+      MARBLE_BUMP_TEX.repeat.set(1.2, 1.2);
+    }
+
+    function getMarbleTexturesForColor(baseColor) {
+      const hexKey = baseColor.getHexString();
+      if (MARBLE_CACHE[hexKey]) return MARBLE_CACHE[hexKey];
+
+      if (!MARBLE_FIELD) buildMarbleField();
+      const { size, cloudArr, veinArr } = MARBLE_FIELD;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(size, size);
+      const d = imgData.data;
+
+      // Soften overly saturated colors slightly to feel like natural mineral stone
+      const stone = baseColor.clone().lerp(new THREE.Color(0xdad4cc), 0.16);
+      const r = stone.r * 255;
+      const g = stone.g * 255;
+      const b = stone.b * 255;
+      const lum = (0.299 * stone.r + 0.587 * stone.g + 0.114 * stone.b);
+      const isDark = lum < 0.35;
+
+      // Dark stone gets crisp white/silver veins; light/colored stone gets dark slate-grey veins
+      const vr = isDark ? 232 : Math.max(45, r * 0.38);
+      const vg = isDark ? 236 : Math.max(48, g * 0.38);
+      const vb = isDark ? 242 : Math.max(54, b * 0.40);
+
+      for (let i = 0; i < size * size; i++) {
+        const cloud = cloudArr[i];
+        const vein = veinArr[i];
+
+        // Cloudy stone variation
+        const shade = isDark
+          ? (0.80 + cloud * 0.36)
+          : (0.83 + cloud * 0.24);
+
+        const sr = Math.min(255, r * shade);
+        const sg = Math.min(255, g * shade);
+        const sb = Math.min(255, b * shade);
+
+        const p = i * 4;
+        d[p]     = Math.min(255, Math.floor(sr * (1 - vein) + vr * vein));
+        d[p + 1] = Math.min(255, Math.floor(sg * (1 - vein) + vg * vein));
+        d[p + 2] = Math.min(255, Math.floor(sb * (1 - vein) + vb * vein));
+        d[p + 3] = 255;
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      const mapTex = new THREE.CanvasTexture(canvas);
+      mapTex.wrapS = THREE.RepeatWrapping;
+      mapTex.wrapT = THREE.RepeatWrapping;
+      mapTex.repeat.set(1.2, 1.2);
+
+      const entry = { map: mapTex, bumpMap: MARBLE_BUMP_TEX };
+      MARBLE_CACHE[hexKey] = entry;
+      return entry;
+    }
+
+    function createMarbleTexture() {
+      return getMarbleTexturesForColor(new THREE.Color(0xf8fafc)).map;
+    }
+
+    function createMetalTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(256, 256);
+      const d = imgData.data;
+      for (let y = 0; y < 256; y++) {
+        const rowNoise = 0.88 + (Math.random() - 0.5) * 0.08;
+        for (let x = 0; x < 256; x++) {
+          const colJitter = (Math.random() - 0.5) * 0.06;
+          const val = Math.min(1, Math.max(0, rowNoise + colJitter));
+          const i = (y * 256 + x) * 4;
+          d[i] = Math.floor(255 * val);
+          d[i+1] = Math.floor(255 * val);
+          d[i+2] = Math.floor(255 * val);
+          d[i+3] = 255;
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function createJadeTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(256, 256);
+      const d = imgData.data;
+      for (let y = 0; y < 256; y++) {
+        for (let x = 0; x < 256; x++) {
+          const nx = x / 70;
+          const ny = y / 70;
+          const cloud = Math.sin(nx + Math.sin(ny * 1.8) * 1.2) * 0.5 + Math.cos(ny + Math.sin(nx * 1.5)) * 0.5;
+          const factor = 0.85 + cloud * 0.14 + (Math.random() - 0.5) * 0.03;
+          const i = (y * 256 + x) * 4;
+          d[i] = Math.min(255, Math.floor(150 * factor));
+          d[i+1] = Math.min(255, Math.floor(255 * factor));
+          d[i+2] = Math.min(255, Math.floor(220 * factor));
+          d[i+3] = 255;
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function createMaterialForSpec(spec, globalOverride = 'default') {
+      const effectiveMat = (globalOverride && globalOverride !== 'default')
+        ? globalOverride
+        : (spec.material || 'plastic');
+
+      if (!MATERIAL_TEXTURES.metal) {
+        MATERIAL_TEXTURES.metal = createMetalTexture();
+        MATERIAL_TEXTURES.wood = createWoodTexture();
+        MATERIAL_TEXTURES.marble = createMarbleTexture();
+        MATERIAL_TEXTURES.jade = createJadeTexture();
+      }
+
+      const baseColor = new THREE.Color(spec.color);
+
+      switch (effectiveMat) {
+        case 'metal':
+          return new THREE.MeshStandardMaterial({
+            color: baseColor,
+            roughness: 0.24,
+            metalness: 0.78,
+            envMapIntensity: 1.4,
+            map: MATERIAL_TEXTURES.metal,
+            bumpMap: MATERIAL_TEXTURES.metal,
+            bumpScale: 0.015
+          });
+        case 'wood':
+          return new THREE.MeshStandardMaterial({
+            color: new THREE.Color(0xedd2b0),
+            roughness: 0.72,
+            metalness: 0.02,
+            envMapIntensity: 0.45,
+            map: MATERIAL_TEXTURES.wood,
+            bumpMap: MATERIAL_TEXTURES.wood,
+            bumpScale: 0.035
+          });
+        case 'marble': {
+          const marbleTex = getMarbleTexturesForColor(baseColor);
+          return new THREE.MeshPhysicalMaterial({
+            color: 0xffffff,
+            roughness: 0.24,
+            metalness: 0.03,
+            clearcoat: 0.65,
+            clearcoatRoughness: 0.15,
+            envMapIntensity: 0.85,
+            map: marbleTex.map,
+            bumpMap: marbleTex.bumpMap,
+            bumpScale: 0.025
+          });
+        }
+        case 'jade':
+          return new THREE.MeshPhysicalMaterial({
+            color: new THREE.Color(0x14d8a4),
+            roughness: 0.06,
+            metalness: 0.08,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.03,
+            transparent: true,
+            opacity: 0.90,
+            reflectivity: 1.0,
+            envMapIntensity: 1.65,
+            map: MATERIAL_TEXTURES.jade
+          });
+        case 'plastic':
+        default:
+          return new THREE.MeshStandardMaterial({
+            color: baseColor,
+            roughness: 0.32,
+            metalness: 0.08,
+            envMapIntensity: 0.8
+          });
+      }
+    }
+
+    // =========================================================
+    // 4. BRICK & GHOST MESH FACTORY
+    // =========================================================
+    function createBrickMesh(spec) {
+      const group = new THREE.Group();
+      const bh = (spec.h || 1) * BRICK_H;
+      const bodyGeo = new THREE.BoxGeometry(spec.w, bh, spec.d);
+      const bodyMat = createMaterialForSpec(spec, currentMaterialTheme);
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+
+      // Edge highlight for crisp LEGO-like definition
+      const edges = new THREE.EdgesGeometry(bodyGeo);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 });
+      const wireframe = new THREE.LineSegments(edges, lineMat);
+      body.add(wireframe);
+
+      // Add studs on top if brick is wide enough
+      const studGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.16, 14);
+      const cols = Math.max(1, Math.round(spec.w));
+      const rows = Math.max(1, Math.round(spec.d));
+      const startX = -((cols - 1) * 0.85) / 2;
+      const startZ = -((rows - 1) * 0.85) / 2;
+      for (let ix = 0; ix < cols; ix++) {
+        for (let iz = 0; iz < rows; iz++) {
+          const sx = startX + ix * 0.85;
+          const sz = startZ + iz * 0.85;
+          if (Math.abs(sx) <= spec.w / 2 - 0.15 && Math.abs(sz) <= spec.d / 2 - 0.15) {
+            const stud = new THREE.Mesh(studGeo, bodyMat);
+            stud.position.set(sx, bh / 2 + 0.08, sz);
+            stud.castShadow = true;
+            stud.receiveShadow = true;
+            group.add(stud);
+          }
+        }
+      }
+      return { group, bodyMat };
+    }
+
+    function createGhostMesh(spec) {
+      const bh = (spec.h || 1) * BRICK_H;
+      const geo = new THREE.BoxGeometry(spec.w * 0.98, bh * 0.98, spec.d * 0.98);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.13,
+        depthWrite: false
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      const edges = new THREE.EdgesGeometry(geo);
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.35
+      });
+      const line = new THREE.LineSegments(edges, edgeMat);
+      mesh.add(line);
+      return { mesh, mat, edgeMat };
+    }
+
+    // =========================================================
+    // 5. GAME STATE & LOGIC
+    // =========================================================
+    const STATE = {
+      SHOWCASE: 'SHOWCASE',
+      SCATTERING: 'SCATTERING',
+      ASSEMBLE: 'ASSEMBLE',
+      COMPLETE: 'COMPLETE'
+    };
+
+    let currentModelKey = 'robot';
+    let gameState = STATE.SHOWCASE;
+    let bricks = []; // { id, spec, group, bodyMat, ghost, ghostMat, ghostEdgeMat, targetPos, scatterPos, placed, anim }
+    let selectedBrick = null;
+    let hoveredBrick = null;
+    let ghostVisible = true;
+    let placedCount = 0;
+    let timerSeconds = 0;
+    let timerInterval = null;
+    let hintBrickId = null;
+
+    const modelRoot = new THREE.Group();
+    scene.add(modelRoot);
+
+    function formatTime(sec) {
+      const m = String(Math.floor(sec / 60)).padStart(2, '0');
+      const s = String(sec % 60).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    let toastTimeout = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('opacity-0');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => el.classList.add('opacity-0'), 2200);
+    }
+
+    function updateHUD() {
+      const total = bricks.length;
+      document.getElementById('stat-placed').textContent = placedCount;
+      document.getElementById('stat-total').textContent = total;
+      const pct = total > 0 ? Math.round((placedCount / total) * 100) : 0;
+      document.getElementById('progress-bar').style.width = `${pct}%`;
+
+      const subtitle = document.getElementById('status-subtitle');
+      const banner = document.getElementById('showcase-banner');
+      const hintBtn = document.getElementById('btn-hint');
+
+      if (gameState === STATE.SHOWCASE) {
+        subtitle.textContent = `${MODELS[currentModelKey].name}・點擊作品即可解體`;
+        banner.classList.remove('opacity-0', 'pointer-events-none');
+        hintBtn.disabled = true;
+      } else if (gameState === STATE.SCATTERING) {
+        subtitle.textContent = '積木解體中...';
+        banner.classList.add('opacity-0', 'pointer-events-none');
+        hintBtn.disabled = true;
+      } else if (gameState === STATE.ASSEMBLE) {
+        subtitle.textContent = selectedBrick ? '點擊發光藍圖位置或拖曳過去即可拼上' : '點選外圍積木並拼回中央藍圖';
+        banner.classList.add('opacity-0', 'pointer-events-none');
+        hintBtn.disabled = false;
+      } else if (gameState === STATE.COMPLETE) {
+        subtitle.textContent = `${MODELS[currentModelKey].name} 拼裝完成！`;
+        banner.classList.add('opacity-0', 'pointer-events-none');
+        hintBtn.disabled = true;
+      }
+    }
+
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    function startTimer() {
+      stopTimer();
+      timerSeconds = 0;
+      document.getElementById('stat-timer').textContent = '00:00';
+      timerInterval = setInterval(() => {
+        if (gameState === STATE.ASSEMBLE) {
+          timerSeconds++;
+          document.getElementById('stat-timer').textContent = formatTime(timerSeconds);
+        }
+      }, 1000);
+    }
+
+    function clearModel() {
+      while (modelRoot.children.length > 0) {
+        modelRoot.remove(modelRoot.children[0]);
+      }
+      bricks = [];
+      selectedBrick = null;
+      hoveredBrick = null;
+      hintBrickId = null;
+      placedCount = 0;
+      stopTimer();
+      document.getElementById('stat-timer').textContent = '00:00';
+      document.getElementById('victory-modal').classList.add('hidden');
+      document.getElementById('victory-modal').classList.remove('flex');
+    }
+
+    function loadModel(key) {
+      currentModelKey = key;
+      clearModel();
+      const def = MODELS[key];
+      const total = def.bricks.length;
+
+      def.bricks.forEach((spec, idx) => {
+        const bh = (spec.h || 1) * BRICK_H;
+        const targetPos = new THREE.Vector3(spec.x, spec.y * BRICK_H + bh / 2, spec.z);
+
+        // Scatter positions arranged neatly in an outer ring around the platform
+        const angle = (idx / total) * Math.PI * 2 + (idx % 2) * 0.15;
+        const radius = 7.4 + (idx % 3) * 1.9;
+        const scatterPos = new THREE.Vector3(
+          Math.cos(angle) * radius,
+          bh / 2 + 0.05,
+          Math.sin(angle) * radius
+        );
+
+        const { group, bodyMat } = createBrickMesh(spec);
+        group.position.copy(targetPos);
+        group.userData.brickId = idx;
+        modelRoot.add(group);
+
+        const { mesh: ghost, mat: ghostMat, edgeMat: ghostEdgeMat } = createGhostMesh(spec);
+        ghost.position.copy(targetPos);
+        ghost.visible = false;
+        ghost.userData.ghostBrickId = idx;
+        modelRoot.add(ghost);
+
+        bricks.push({
+          id: idx,
+          spec,
+          group,
+          bodyMat,
+          ghost,
+          ghostMat,
+          ghostEdgeMat,
+          targetPos,
+          scatterPos,
+          scatterRotY: (Math.random() - 0.5) * 0.8,
+          placed: true,
+          anim: null
+        });
+      });
+
+      gameState = STATE.SHOWCASE;
+      placedCount = total;
+      modelRoot.rotation.y = 0;
+      updateHUD();
+      renderModelTabs();
+    }
+
+    function renderModelTabs() {
+      const tabContainer = document.getElementById('model-tabs');
+      if (!tabContainer) return;
+      tabContainer.innerHTML = '';
+      Object.keys(MODELS).forEach(key => {
+        const btn = document.createElement('button');
+        btn.dataset.model = key;
+        const active = key === currentModelKey;
+        const isAi = key.startsWith('ai_');
+        btn.textContent = isAi ? `✨ ${MODELS[key].name}` : MODELS[key].name;
+        btn.className = active
+          ? 'model-btn px-2.5 py-1.5 rounded-lg text-xs font-medium transition bg-sky-500 text-slate-950 shrink-0 shadow-sm'
+          : 'model-btn px-2.5 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:bg-slate-800 shrink-0';
+        btn.addEventListener('click', () => loadModel(key));
+        tabContainer.appendChild(btn);
+      });
+    }
+
+    function triggerExplode() {
+      if (gameState !== STATE.SHOWCASE) return;
+      sfx.playExplode();
+      gameState = STATE.SCATTERING;
+      placedCount = 0;
+      modelRoot.rotation.y = 0;
+
+      bricks.forEach((b, idx) => {
+        b.placed = false;
+        b.ghost.visible = ghostVisible;
+        b.anim = {
+          startPos: b.group.position.clone(),
+          endPos: b.scatterPos.clone(),
+          startRotY: b.group.rotation.y,
+          endRotY: b.scatterRotY,
+          progress: 0,
+          duration: 0.65 + (idx % 5) * 0.06,
+          arcHeight: 2.5 + Math.random() * 2.5,
+          onDone: () => {
+            if (bricks.every(item => !item.anim)) {
+              gameState = STATE.ASSEMBLE;
+              startTimer();
+              updateHUD();
+              showToast('作品已解體！點選外圍積木再點藍圖即可拼回');
+            }
+          }
+        };
+      });
+      updateHUD();
+    }
+
+    function selectBrick(brick) {
+      if (gameState !== STATE.ASSEMBLE || !brick || brick.placed) return;
+      if (selectedBrick === brick) return;
+      selectedBrick = brick;
+      sfx.playSelect();
+      updateHighlights();
+      updateHUD();
+    }
+
+    function snapBrick(brick) {
+      if (!brick || brick.placed) return;
+      brick.placed = true;
+      brick.ghost.visible = false;
+      if (selectedBrick === brick) selectedBrick = null;
+      if (hintBrickId === brick.id) hintBrickId = null;
+
+      placedCount++;
+      sfx.playSnap(placedCount);
+
+      brick.anim = {
+        startPos: brick.group.position.clone(),
+        endPos: brick.targetPos.clone(),
+        startRotY: brick.group.rotation.y,
+        endRotY: 0,
+        progress: 0,
+        duration: 0.32,
+        arcHeight: 1.6,
+        onDone: () => {
+          if (placedCount === bricks.length) {
+            completeGame();
+          }
+        }
+      };
+
+      updateHighlights();
+      updateHUD();
+    }
+
+    function completeGame() {
+      gameState = STATE.COMPLETE;
+      stopTimer();
+      sfx.playVictory();
+      updateHUD();
+
+      if (typeof confetti === 'function') {
+        confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+      }
+
+      document.getElementById('victory-time').textContent = formatTime(timerSeconds);
+      document.getElementById('victory-bricks').textContent = `${bricks.length} 塊`;
+      document.getElementById('victory-desc').textContent = `你成功將「${MODELS[currentModelKey].name}」的所有積木精準歸位！`;
+      document.getElementById('victory-modal').classList.remove('hidden');
+      document.getElementById('victory-modal').classList.add('flex');
+    }
+
+    function updateHighlights() {
+      bricks.forEach(b => {
+        const isSel = selectedBrick && selectedBrick.id === b.id;
+        const isHov = hoveredBrick && hoveredBrick.id === b.id;
+        const isHint = hintBrickId === b.id;
+
+        if (!b.placed) {
+          if (isSel) {
+            b.bodyMat.emissive.setHex(0x0284c7);
+            b.bodyMat.emissiveIntensity = 0.55;
+            b.ghost.visible = true;
+            b.ghostMat.color.setHex(0x38bdf8);
+            b.ghostMat.opacity = 0.42;
+            b.ghostEdgeMat.color.setHex(0x7dd3fc);
+            b.ghostEdgeMat.opacity = 0.95;
+          } else if (isHint) {
+            b.bodyMat.emissive.setHex(0xd97706);
+            b.bodyMat.emissiveIntensity = 0.5;
+            b.ghost.visible = true;
+            b.ghostMat.color.setHex(0xfbbf24);
+            b.ghostMat.opacity = 0.4;
+            b.ghostEdgeMat.color.setHex(0xfde68a);
+            b.ghostEdgeMat.opacity = 0.95;
+          } else if (isHov) {
+            b.bodyMat.emissive.setHex(0x38bdf8);
+            b.bodyMat.emissiveIntensity = 0.28;
+            b.ghost.visible = ghostVisible;
+            b.ghostMat.color.setHex(0x38bdf8);
+            b.ghostMat.opacity = 0.16;
+            b.ghostEdgeMat.color.setHex(0x38bdf8);
+            b.ghostEdgeMat.opacity = 0.45;
+          } else {
+            b.bodyMat.emissive.setHex(0x000000);
+            b.bodyMat.emissiveIntensity = 0;
+            b.ghost.visible = ghostVisible;
+            b.ghostMat.color.setHex(0x38bdf8);
+            b.ghostMat.opacity = 0.12;
+            b.ghostEdgeMat.color.setHex(0x38bdf8);
+            b.ghostEdgeMat.opacity = 0.32;
+          }
+        } else {
+          b.bodyMat.emissive.setHex(0x000000);
+          b.bodyMat.emissiveIntensity = 0;
+        }
+      });
+    }
+
+    // =========================================================
+    // 6. CUSTOM ORBIT CAMERA + RAYCASTING INTERACTION
+    // =========================================================
+    const camState = {
+      theta: Math.PI / 4,
+      phi: 1.05,
+      radius: 19,
+      target: new THREE.Vector3(0, 2.8, 0)
+    };
+
+    function updateCameraTransform() {
+      const sinPhi = Math.sin(camState.phi);
+      camera.position.x = camState.target.x + camState.radius * sinPhi * Math.sin(camState.theta);
+      camera.position.y = camState.target.y + camState.radius * Math.cos(camState.phi);
+      camera.position.z = camState.target.z + camState.radius * sinPhi * Math.cos(camState.theta);
+      camera.lookAt(camState.target);
+    }
+    updateCameraTransform();
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const dragIntersect = new THREE.Vector3();
+
+    let pointerDownPos = { x: 0, y: 0 };
+    let lastPointerPos = { x: 0, y: 0 };
+    let isOrbiting = false;
+    let isDraggingBrick = false;
+    let draggedBrick = null;
+    let pointerMoved = false;
+
+    function getNDC(clientX, clientY) {
+      pointer.x = (clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+    }
+
+    function findBrickHit() {
+      raycaster.setFromCamera(pointer, camera);
+      const brickGroups = bricks.filter(b => !b.anim).map(b => b.group);
+      const hits = raycaster.intersectObjects(brickGroups, true);
+      if (hits.length > 0) {
+        let obj = hits[0].object;
+        while (obj && obj.userData.brickId === undefined) obj = obj.parent;
+        if (obj) return bricks[obj.userData.brickId];
+      }
+      return null;
+    }
+
+    function findGhostHit() {
+      raycaster.setFromCamera(pointer, camera);
+      const ghosts = bricks.filter(b => !b.placed && b.ghost.visible).map(b => b.ghost);
+      const hits = raycaster.intersectObjects(ghosts, false);
+      if (hits.length > 0) {
+        return bricks[hits[0].object.userData.ghostBrickId];
+      }
+      return null;
+    }
+
+    container.addEventListener('pointerdown', (e) => {
+      sfx.init();
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+      pointerMoved = false;
+      getNDC(e.clientX, e.clientY);
+
+      if (gameState === STATE.ASSEMBLE) {
+        const hitBrick = findBrickHit();
+        if (hitBrick && !hitBrick.placed) {
+          selectBrick(hitBrick);
+          draggedBrick = hitBrick;
+          isDraggingBrick = true;
+          dragPlane.constant = -hitBrick.group.position.y;
+          container.classList.add('dragging-brick');
+          return;
+        }
+      }
+
+      isOrbiting = true;
+      container.classList.add('dragging-cam');
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      const dx = e.clientX - lastPointerPos.x;
+      const dy = e.clientY - lastPointerPos.y;
+      if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 5) {
+        pointerMoved = true;
+      }
+
+      if (isDraggingBrick && draggedBrick) {
+        getNDC(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(dragPlane, dragIntersect)) {
+          draggedBrick.group.position.x = THREE.MathUtils.clamp(dragIntersect.x, -14, 14);
+          draggedBrick.group.position.z = THREE.MathUtils.clamp(dragIntersect.z, -14, 14);
+          // Lift slightly while dragging
+          const baseH = (draggedBrick.spec.h || 1) * BRICK_H / 2;
+          draggedBrick.group.position.y = Math.max(baseH + 0.5, draggedBrick.targetPos.y);
+
+          // Magnetic snap check in XZ + Y
+          const distXZ = Math.hypot(
+            draggedBrick.group.position.x - draggedBrick.targetPos.x,
+            draggedBrick.group.position.z - draggedBrick.targetPos.z
+          );
+          if (distXZ < 1.35) {
+            isDraggingBrick = false;
+            container.classList.remove('dragging-brick');
+            snapBrick(draggedBrick);
+            draggedBrick = null;
+          }
+        }
+      } else if (isOrbiting) {
+        camState.theta -= dx * 0.007;
+        camState.phi = THREE.MathUtils.clamp(camState.phi - dy * 0.006, 0.25, 1.42);
+        updateCameraTransform();
+      } else if (gameState === STATE.ASSEMBLE || gameState === STATE.SHOWCASE) {
+        getNDC(e.clientX, e.clientY);
+        const hit = findBrickHit();
+        const nextHover = (hit && (!hit.placed || gameState === STATE.SHOWCASE)) ? hit : null;
+        if (nextHover !== hoveredBrick) {
+          hoveredBrick = nextHover;
+          container.classList.toggle('hovering-brick', !!hoveredBrick);
+          if (gameState === STATE.ASSEMBLE) updateHighlights();
+        }
+      }
+
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (isDraggingBrick && draggedBrick) {
+        if (!pointerMoved) {
+          // Simple click on brick already selected it
+        } else if (!draggedBrick.placed) {
+          // Return gently to scatter spot if dropped away from target
+          draggedBrick.anim = {
+            startPos: draggedBrick.group.position.clone(),
+            endPos: draggedBrick.scatterPos.clone(),
+            startRotY: draggedBrick.group.rotation.y,
+            endRotY: draggedBrick.scatterRotY,
+            progress: 0,
+            duration: 0.25,
+            arcHeight: 0.5
+          };
+        }
+        isDraggingBrick = false;
+        draggedBrick = null;
+        container.classList.remove('dragging-brick');
+      }
+
+      if (isOrbiting) {
+        isOrbiting = false;
+        container.classList.remove('dragging-cam');
+      }
+
+      if (!pointerMoved) {
+        getNDC(e.clientX, e.clientY);
+        if (gameState === STATE.SHOWCASE) {
+          const hit = findBrickHit();
+          if (hit) triggerExplode();
+        } else if (gameState === STATE.ASSEMBLE && selectedBrick) {
+          const ghostHit = findGhostHit();
+          if (ghostHit && ghostHit.id === selectedBrick.id) {
+            snapBrick(selectedBrick);
+          } else if (ghostHit) {
+            showToast('這塊積木的藍圖位置在另一個地方喔！');
+          }
+        }
+      }
+    });
+
+    container.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      camState.radius = THREE.MathUtils.clamp(camState.radius + e.deltaY * 0.015, 9, 32);
+      updateCameraTransform();
+    }, { passive: false });
+
+    // =========================================================
+    // 7. UI BUTTONS & AI GEMINI INTEGRATION
+    // =========================================================
+    document.getElementById('btn-explode').addEventListener('click', triggerExplode);
+
+    document.getElementById('btn-sound').addEventListener('click', () => {
+      sfx.muted = !sfx.muted;
+      document.getElementById('sound-icon').textContent = sfx.muted ? '🔇' : '🔊';
+    });
+
+    document.getElementById('btn-ghost').addEventListener('click', () => {
+      ghostVisible = !ghostVisible;
+      document.getElementById('btn-ghost').textContent = ghostVisible ? '👻 藍圖：開' : '👻 藍圖：關';
+      updateHighlights();
+    });
+
+    document.getElementById('btn-hint').addEventListener('click', () => {
+      if (gameState !== STATE.ASSEMBLE) return;
+      // Pick lowest unplaced brick (bottom-up assembly)
+      const remaining = bricks.filter(b => !b.placed).sort((a, b) => a.spec.y - b.spec.y);
+      if (remaining.length > 0) {
+        hintBrickId = remaining[0].id;
+        selectBrick(remaining[0]);
+        showToast('已標記建議優先拼裝的積木與金色藍圖位置！');
+      }
+    });
+
+    document.getElementById('btn-reset-cam').addEventListener('click', () => {
+      camState.theta = Math.PI / 4;
+      camState.phi = 1.05;
+      camState.radius = 19;
+      updateCameraTransform();
+    });
+
+    document.getElementById('btn-restart').addEventListener('click', () => loadModel(currentModelKey));
+    document.getElementById('btn-play-again').addEventListener('click', () => {
+      loadModel(currentModelKey);
+    });
+    document.getElementById('btn-next-model').addEventListener('click', () => {
+      const keys = Object.keys(MODELS);
+      const nextKey = keys[(keys.indexOf(currentModelKey) + 1) % keys.length];
+      loadModel(nextKey);
+    });
+
+    // ---------------------------------------------------------
+    // MATERIAL THEME SWITCHER (Metal, Wood, Marble, Jade, Default)
+    // ---------------------------------------------------------
+    function applyMaterialTheme(theme) {
+      currentMaterialTheme = theme;
+      bricks.forEach(b => {
+        const oldMat = b.bodyMat;
+        const newMat = createMaterialForSpec(b.spec, currentMaterialTheme);
+        b.bodyMat = newMat;
+        b.group.children.forEach(child => {
+          if (child.isMesh && child.geometry && child.geometry.type !== 'LineSegments') {
+            child.material = newMat;
+          }
+        });
+        if (oldMat && oldMat.dispose) oldMat.dispose();
+      });
+      updateHighlights();
+      updateMaterialButtons();
+
+      const labels = {
+        default: '✨ 已還原為物件預設混合材質！',
+        metal: '🪙 已切換為純金屬光澤材質！',
+        wood: '🪵 已切換為溫潤原木紋理材質！',
+        marble: '🏛️ 已切換為拋光大理石石材質感！',
+        jade: '🟢 已切換為晶瑩透光翡翠玉石材質！'
+      };
+      showToast(labels[theme] || '已切換材質');
+    }
+
+    function updateMaterialButtons() {
+      document.querySelectorAll('.mat-btn').forEach(btn => {
+        const active = btn.dataset.mat === currentMaterialTheme;
+        btn.className = active
+          ? 'mat-btn px-2 py-1 rounded-lg text-xs font-semibold transition bg-sky-500 text-slate-950 shadow-sm'
+          : 'mat-btn px-2 py-1 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition';
+      });
+    }
+
+    document.querySelectorAll('.mat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        sfx.playSelect();
+        applyMaterialTheme(btn.dataset.mat);
+      });
+    });
+
+    // ---------------------------------------------------------
+    // AI GEMINI 3.5 / 2.5 FLASH BRICK GENERATOR
+    // ---------------------------------------------------------
+    const RANDOM_THEMES = [
+      '可愛柴犬', '超跑賽車', '迷你小城堡', '美式漢堡套餐', '侏羅紀暴龍',
+      '太空探測船', '外星飛碟', '黃色小鴨', '忍者機器人', '復古相機',
+      '蒸氣火車頭', '海洋藍鯨', '魔幻蘑菇屋', '特警直升機', '街機遊戲機台',
+      '海盜帆船', '賽博重機', '雪人與聖誕樹', '摩艾石像', '貓咪咖啡杯'
+    ];
+
+    const STORAGE_KEY_API = 'gemini_api_key';
+    const STORAGE_KEY_MODEL = 'gemini_model_selection';
+
+    function getApiKey() {
+      return (localStorage.getItem(STORAGE_KEY_API) || '').trim();
+    }
+
+    function setApiKey(key) {
+      if (key) {
+        localStorage.setItem(STORAGE_KEY_API, key.trim());
+      } else {
+        localStorage.removeItem(STORAGE_KEY_API);
+      }
+      updateApiKeyUI();
+    }
+
+    function updateApiKeyUI() {
+      const key = getApiKey();
+      const badge = document.getElementById('key-badge');
+      const statusText = document.getElementById('api-key-status');
+      const clearBtn = document.getElementById('btn-clear-key');
+      const input = document.getElementById('input-api-key');
+
+      if (key) {
+        if (badge) {
+          badge.className = 'w-2 h-2 rounded-full bg-emerald-400';
+          badge.title = 'API Key 已設定';
+        }
+        if (statusText) {
+          statusText.textContent = '(已設定)';
+          statusText.className = 'text-[10px] text-emerald-400 font-normal';
+        }
+        if (clearBtn) clearBtn.classList.remove('hidden');
+        if (input && !input.value) input.value = key;
+      } else {
+        if (badge) {
+          badge.className = 'w-2 h-2 rounded-full bg-rose-500';
+          badge.title = '未設定 API Key';
+        }
+        if (statusText) {
+          statusText.textContent = '(尚未設定)';
+          statusText.className = 'text-[10px] text-amber-400 font-normal';
+        }
+        if (clearBtn) clearBtn.classList.add('hidden');
+      }
+    }
+
+    const aiModal = document.getElementById('ai-modal');
+    const inputApiKey = document.getElementById('input-api-key');
+    const selectModel = document.getElementById('select-model');
+    const inputCustomModel = document.getElementById('input-custom-model');
+    const inputTheme = document.getElementById('input-theme');
+    const aiStatusBox = document.getElementById('ai-status-box');
+    const btnSubmitAi = document.getElementById('btn-submit-ai');
+    const aiSubmitText = document.getElementById('ai-submit-text');
+    const aiSubmitIcon = document.getElementById('ai-submit-icon');
+
+    function openAiModal(focusKey = false) {
+      updateApiKeyUI();
+      const savedModel = localStorage.getItem(STORAGE_KEY_MODEL) || 'gemini-3.5-flash';
+      if ([...selectModel.options].some(o => o.value === savedModel)) {
+        selectModel.value = savedModel;
+        inputCustomModel.classList.add('hidden');
+      } else {
+        selectModel.value = 'custom';
+        inputCustomModel.value = savedModel;
+        inputCustomModel.classList.remove('hidden');
+      }
+
+      hideAiStatus();
+      aiModal.classList.remove('hidden');
+      aiModal.classList.add('flex');
+
+      if (focusKey || !getApiKey()) {
+        setTimeout(() => inputApiKey.focus(), 150);
+      } else {
+        setTimeout(() => inputTheme.focus(), 150);
+      }
+    }
+
+    function closeAiModal() {
+      aiModal.classList.add('hidden');
+      aiModal.classList.remove('flex');
+      hideAiStatus();
+    }
+
+    function showAiStatus(msg, type = 'info') {
+      aiStatusBox.classList.remove('hidden');
+      if (type === 'error') {
+        aiStatusBox.className = 'mb-4 p-2.5 rounded-xl text-xs bg-rose-500/15 border border-rose-500/40 text-rose-300';
+      } else if (type === 'success') {
+        aiStatusBox.className = 'mb-4 p-2.5 rounded-xl text-xs bg-emerald-500/15 border border-emerald-500/40 text-emerald-300';
+      } else {
+        aiStatusBox.className = 'mb-4 p-2.5 rounded-xl text-xs bg-indigo-500/15 border border-indigo-500/40 text-indigo-300 flex items-center gap-2';
+      }
+      aiStatusBox.innerHTML = msg;
+    }
+
+    function hideAiStatus() {
+      aiStatusBox.classList.add('hidden');
+      aiStatusBox.innerHTML = '';
+    }
+
+    // Modal UI Handlers
+    document.getElementById('btn-open-ai').addEventListener('click', () => openAiModal());
+    document.getElementById('btn-open-key').addEventListener('click', () => openAiModal(true));
+    document.getElementById('btn-close-ai').addEventListener('click', closeAiModal);
+    document.getElementById('btn-cancel-ai').addEventListener('click', closeAiModal);
+
+    document.getElementById('btn-toggle-key-vis').addEventListener('click', () => {
+      const isPass = inputApiKey.type === 'password';
+      inputApiKey.type = isPass ? 'text' : 'password';
+      document.getElementById('btn-toggle-key-vis').textContent = isPass ? '隱藏' : '顯示';
+    });
+
+    document.getElementById('btn-clear-key').addEventListener('click', () => {
+      if (confirm('確定要清除儲存在本機的 API Key 嗎？')) {
+        setApiKey('');
+        inputApiKey.value = '';
+        showToast('已清除 API Key');
+      }
+    });
+
+    selectModel.addEventListener('change', () => {
+      if (selectModel.value === 'custom') {
+        inputCustomModel.classList.remove('hidden');
+        inputCustomModel.focus();
+      } else {
+        inputCustomModel.classList.add('hidden');
+      }
+    });
+
+    document.getElementById('btn-random-prompt').addEventListener('click', () => {
+      const cur = inputTheme.value.trim();
+      const options = RANDOM_THEMES.filter(t => t !== cur);
+      const chosen = options[Math.floor(Math.random() * options.length)];
+      inputTheme.value = chosen;
+      inputTheme.focus();
+    });
+
+    document.querySelectorAll('.theme-tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        inputTheme.value = tag.dataset.theme;
+        inputTheme.focus();
+      });
+    });
+
+    async function callGeminiGenerate(modelName, apiKey, promptTheme, matStyle = 'mixed') {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+      let materialInstruction = "【材質要求 (material)】多元材質混搭！請根據部位指派適合的材質：'metal'(金屬關節/天線/噴射器)、'wood'(木構/甲板/自然部分)、'marble'(外殼/雕刻基石)、'jade'(能量核心/眼睛寶石/透光處)、'plastic'(經典彩磚)。";
+      if (matStyle === 'metal') {
+        materialInstruction = "【材質要求 (material)】純金屬風格！所有積木的 material 欄位請設定為 'metal'，色彩請搭配金屬色（如鈦金灰、黃金金、鈷藍金屬、銅紅等）。";
+      } else if (matStyle === 'wood') {
+        materialInstruction = "【材質要求 (material)】溫潤原木風格！所有積木的 material 欄位請設定為 'wood'，色彩請搭配天然木質色（原木色、胡桃木色、柚木棕等）。";
+      } else if (matStyle === 'marble') {
+        materialInstruction = "【材質要求 (material)】奢華大理石風格！所有積木的 material 欄位請設定為 'marble'，色彩請搭配白石英、黑曜石、灰大理石、紅白石材等。";
+      } else if (matStyle === 'jade') {
+        materialInstruction = "【材質要求 (material)】璀璨翡翠玉石風格！所有積木的 material 欄位請設定為 'jade'，色彩請搭配碧綠翡翠色、天青玉色、黃龍玉、墨玉等透光寶石色。";
+      }
+
+      const systemInstruction = `你是一位世界頂級的 3D LEGO / 積木建築結構設計師。
+請為 3D 積木解體拼裝網頁遊戲設計一個造型生動、顏色繽紛、空間結構穩固的積木作品。
+
+【幾何與坐標設計規範】
+1. 積木總數：必須在 12 至 22 塊之間（不可太少以確保精美，也不宜超過 24 塊）。
+2. y 代表垂直堆疊層級（非負整數）：
+   - y = 0 是最底層接地基底（例如腳、底座、地盤、輪胎）。
+   - y = 1, 2, 3... 逐層向上搭蓋，最高約 5 ~ 9 層。
+   - 每一塊積木下方都應有實體支撐或直接接地，絕對不可憑空懸空漂浮。
+3. 坐標範圍：
+   - X 與 Z 坐標中心請控制在 -3.5 到 +3.5 之間，作品整體居中 (X≈0, Z≈0)。
+   - 結構左右盡量平衡或具有立體造型美感。
+4. 積木尺寸：
+   - w (X軸寬度)：常用 1.0, 1.2, 1.6, 2.0, 2.4, 3.0 等。
+   - d (Z軸深度)：常用 1.0, 1.2, 1.6, 2.0, 2.4 等。
+   - h (高度倍率)：通常為 1.0（薄板可設 0.6~0.8）。
+5. 色彩配置：請使用亮麗高辨識度的積木經典色票 Hex 代碼（如 #ef4444, #3b82f6, #10b981, #f59e0b, #f97316, #8b5cf6, #f8fafc, #334155, #1e293b, #fbbf24, #06b6d4 等）。
+6. ${materialInstruction}
+7. 請嚴格遵守提供的 JSON Schema 格式輸出。`;
+
+      const promptText = promptTheme && promptTheme.trim()
+        ? `請設計主題為「${promptTheme.trim()}」的 3D 積木作品。`
+        : `請發揮創意，隨機設計一個造型獨特且易於辨識的 3D 積木作品（例如載具、動物、建築、日常器物或卡通角色）。`;
+
+      const requestPayload = {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: systemInstruction + "\n\n" + promptText }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.85,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              name: { type: "STRING", description: "作品名稱（繁體中文，約4到10字）" },
+              description: { type: "STRING", description: "作品特色簡介（約15到30字）" },
+              bricks: {
+                type: "ARRAY",
+                description: "積木陣列，共12到22塊，由底層 y=0 往上排列",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    x: { type: "NUMBER", description: "X 軸中心坐標" },
+                    y: { type: "INTEGER", description: "垂直層級 (0, 1, 2...)" },
+                    z: { type: "NUMBER", description: "Z 軸中心坐標" },
+                    w: { type: "NUMBER", description: "積木寬度" },
+                    h: { type: "NUMBER", description: "積木高度倍率，通常為 1.0" },
+                    d: { type: "NUMBER", description: "積木深度" },
+                    color: { type: "STRING", description: "16進位顏色碼，如 #ef4444" },
+                    material: { type: "STRING", description: "材質類型，可選: metal, wood, marble, jade, plastic" }
+                  },
+                  required: ["x", "y", "z", "w", "h", "d", "color"]
+                }
+              }
+            },
+            required: ["name", "bricks"]
+          }
+        }
+      };
+
+      return await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload)
+      });
+    }
+
+    btnSubmitAi.addEventListener('click', async () => {
+      const apiKey = inputApiKey.value.trim() || getApiKey();
+      if (!apiKey) {
+        showAiStatus('⚠️ 請先輸入您的 Gemini API Key！可至 <a href="https://aistudio.google.com/app/apikey" target="_blank" class="underline text-sky-400">Google AI Studio</a> 免費取得。', 'error');
+        inputApiKey.focus();
+        return;
+      }
+
+      setApiKey(apiKey);
+
+      let targetModel = selectModel.value;
+      if (targetModel === 'custom') {
+        targetModel = inputCustomModel.value.trim() || 'gemini-3.5-flash';
+      }
+      localStorage.setItem(STORAGE_KEY_MODEL, targetModel);
+
+      const theme = inputTheme.value.trim();
+      const matStyle = document.getElementById('select-ai-mat-style')?.value || 'mixed';
+
+      // UI Loading state
+      btnSubmitAi.disabled = true;
+      btnSubmitAi.classList.add('opacity-60', 'pointer-events-none');
+      aiSubmitIcon.textContent = '⏳';
+      aiSubmitText.textContent = '構想積木結構中...';
+      showAiStatus(`<span>🤖 Gemini (${targetModel}) 正在計算 3D 積木坐標、色彩與材質配置...</span>`, 'info');
+
+      try {
+        let res = await callGeminiGenerate(targetModel, apiKey, theme, matStyle);
+
+        // Fallback check: if gemini-3.5-flash returns 404 (model endpoint not yet found), fallback to gemini-2.5-flash
+        if (!res.ok && res.status === 404 && targetModel.includes('3.5')) {
+          showAiStatus(`<span>⚠️ 模型 ${targetModel} 在 API 端尚未開放 (404)，正在自動以相容穩定的 <strong>gemini-2.5-flash</strong> 重新生成...</span>`, 'info');
+          res = await callGeminiGenerate('gemini-2.5-flash', apiKey, theme, matStyle);
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData?.error?.message || `HTTP ${res.status} (${res.statusText})`;
+          throw new Error(errMsg);
+        }
+
+        const data = await res.json();
+        const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!textOutput) {
+          throw new Error('Gemini API 未回傳有效的內容結構');
+        }
+
+        const parsed = JSON.parse(textOutput);
+        if (!parsed.bricks || !Array.isArray(parsed.bricks) || parsed.bricks.length === 0) {
+          throw new Error('產生的積木陣列為空');
+        }
+
+        // Normalize coordinates & center model
+        const rawBricks = parsed.bricks;
+        const minY = Math.min(...rawBricks.map(b => Number(b.y) || 0));
+        const avgX = rawBricks.reduce((sum, b) => sum + (Number(b.x) || 0), 0) / rawBricks.length;
+        const avgZ = rawBricks.reduce((sum, b) => sum + (Number(b.z) || 0), 0) / rawBricks.length;
+
+        const validMaterials = ['metal', 'wood', 'marble', 'jade', 'plastic'];
+        const cleanBricks = rawBricks.map(b => {
+          let col = 0x38bdf8;
+          try {
+            col = new THREE.Color(b.color || '#38bdf8').getHex();
+          } catch (e) {
+            col = 0x38bdf8;
+          }
+          const brickMat = (b.material && validMaterials.includes(b.material))
+            ? b.material
+            : (matStyle !== 'mixed' ? matStyle : 'metal');
+
+          return {
+            x: Math.round(((Number(b.x) || 0) - avgX) * 10) / 10,
+            y: Math.max(0, Math.round((Number(b.y) || 0) - minY)),
+            z: Math.round(((Number(b.z) || 0) - avgZ) * 10) / 10,
+            w: Math.max(0.6, Math.min(5.0, Math.round((Number(b.w) || 1) * 10) / 10)),
+            h: Math.max(0.4, Math.min(2.5, Math.round((Number(b.h) || 1) * 10) / 10)),
+            d: Math.max(0.6, Math.min(5.0, Math.round((Number(b.d) || 1) * 10) / 10)),
+            color: col,
+            material: brickMat
+          };
+        });
+
+        const newKey = 'ai_' + Date.now();
+        const modelName = (parsed.name || theme || 'AI 創意積木').slice(0, 12);
+        MODELS[newKey] = {
+          name: modelName,
+          bricks: cleanBricks
+        };
+
+        currentMaterialTheme = matStyle !== 'mixed' ? matStyle : 'default';
+        updateMaterialButtons();
+
+        renderModelTabs();
+        closeAiModal();
+        loadModel(newKey);
+        sfx.playMagic();
+
+        if (typeof confetti === 'function') {
+          confetti({ particleCount: 75, spread: 70, origin: { y: 0.65 } });
+        }
+        showToast(`✨ 成功生成「${modelName}」（共 ${cleanBricks.length} 塊積木）！點擊即可解體拼裝！`);
+      } catch (err) {
+        console.error('AI Generation Error:', err);
+        showAiStatus(`❌ 生成失敗：${err.message || '請確認 API Key 是否正確以及網路狀態'}`, 'error');
+      } finally {
+        btnSubmitAi.disabled = false;
+        btnSubmitAi.classList.remove('opacity-60', 'pointer-events-none');
+        aiSubmitIcon.textContent = '✨';
+        aiSubmitText.textContent = '開始隨機生成';
+      }
+    });
+
+    // Initialize API Key UI on page load
+    updateApiKeyUI();
+
+    // =========================================================
+    // 8. ANIMATION LOOP & RESIZE
+    // =========================================================
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+
+      // Gentle showcase turntable rotation
+      if (gameState === STATE.SHOWCASE || gameState === STATE.COMPLETE) {
+        modelRoot.rotation.y += dt * 0.45;
+      }
+
+      // Brick arc animations
+      bricks.forEach(b => {
+        if (!b.anim) return;
+        b.anim.progress += dt / b.anim.duration;
+        const t = Math.min(b.anim.progress, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        b.group.position.lerpVectors(b.anim.startPos, b.anim.endPos, ease);
+        b.group.position.y += Math.sin(t * Math.PI) * b.anim.arcHeight;
+        b.group.rotation.y = THREE.MathUtils.lerp(b.anim.startRotY, b.anim.endRotY, ease);
+
+        if (t >= 1) {
+          b.group.position.copy(b.anim.endPos);
+          b.group.rotation.y = b.anim.endRotY;
+          const cb = b.anim.onDone;
+          b.anim = null;
+          if (cb) cb();
+        }
+      });
+
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function init() {
+      if (typeof THREE === 'undefined') {
+        setTimeout(init, 30);
+        return;
+      }
+      loadModel('robot');
+      updateMaterialButtons();
+      animate();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>
